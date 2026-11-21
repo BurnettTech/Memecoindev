@@ -184,307 +184,48 @@ describe("balance logic", () => {
   });
 });
 
-import {
-  PRICE_TTL_MS,
-  clearPriceCache,
-  getSmoothedPrice,
-  parseMinUsd,
-  pickBestGeckoPool,
-  pickBestPair,
-  resolveRequirement,
-  smoothPrice,
-  tokensForUsd,
-} from "./price.server.ts";
 import { DEFAULT_MIN_BALANCE } from "./config.ts";
+import { resolveMinBalance } from "./core.server.ts";
 
-describe("dollar minimum (ANCHOR_MIN_USD)", () => {
-  const pair = (over: Record<string, unknown>) => ({
-    chainId: "solana",
-    dexId: "pumpswap",
-    pairAddress: "P" + Math.random(),
-    baseToken: { address: ANCHOR_MINT },
-    priceUsd: "0.00001",
-    liquidity: { usd: 1000 },
-    priceChange: { h24: 0 },
-    ...over,
-  });
-
-  it("default token minimum is 5,000", () => {
+describe("members minimum (flat token count)", () => {
+  it("defaults to 5,000 whole $ANCHOR", () => {
     assert.equal(DEFAULT_MIN_BALANCE, 5_000);
+    assert.equal(resolveMinBalance({}), 5_000);
   });
 
-  it("parses ANCHOR_MIN_USD", () => {
-    assert.equal(parseMinUsd(undefined), undefined);
-    assert.equal(parseMinUsd("25"), 25);
-    assert.equal(parseMinUsd("$1,000"), 1000);
-    assert.equal(parseMinUsd("0"), undefined);
-    assert.equal(parseMinUsd("-3"), undefined);
-    assert.equal(parseMinUsd("abc"), undefined);
-  });
-
-  it("picks the highest-liquidity Solana pair where $ANCHOR is the base token", () => {
-    const best = pickBestPair(
-      [
-        pair({ pairAddress: "small", liquidity: { usd: 500 } }),
-        pair({ pairAddress: "big", liquidity: { usd: 9000 } }),
-        pair({
-          pairAddress: "quote-side",
-          liquidity: { usd: 99999 },
-          baseToken: { address: "So11111111111111111111111111111111111111112" },
-        }),
-        pair({ pairAddress: "other-chain", liquidity: { usd: 99999 }, chainId: "base" }),
-        pair({ pairAddress: "no-price", liquidity: { usd: 99999 }, priceUsd: "0" }),
-      ],
-      ANCHOR_MINT,
+  it("ignores a leftover ANCHOR_MIN_USD (no dollar gate)", () => {
+    assert.equal(resolveMinBalance({ ANCHOR_MIN_USD: "25" }), DEFAULT_MIN_BALANCE);
+    assert.equal(resolveMinBalance({ ANCHOR_MIN_USD: "$1,000" }), DEFAULT_MIN_BALANCE);
+    assert.equal(
+      resolveMinBalance({ ANCHOR_MIN_USD: "25", ANCHOR_MIN_BALANCE: "20000" }),
+      20_000,
     );
-    assert.equal(best?.pairAddress, "big");
-    assert.equal(pickBestPair([], ANCHOR_MINT), null);
-    assert.equal(pickBestPair({ pairs: null }, ANCHOR_MINT), null);
   });
 
-  it("smooths with the higher of current and 24h-ago price", () => {
-    // Dumped 50%: was 0.00002, now 0.00001 -> use 0.00002 (fewer tokens needed)
-    const dump = smoothPrice(0.00001, -50);
-    assert.equal(dump.method, "max_current_24h_ago");
-    assert.ok(Math.abs(dump.ago24hUsd! - 0.00002) < 1e-15);
-    assert.ok(Math.abs(dump.priceUsd - 0.00002) < 1e-15);
-    // Pumped 100%: was 0.00001, now 0.00002 -> current is higher, use it
-    const pump = smoothPrice(0.00002, 100);
-    assert.ok(Math.abs(pump.priceUsd - 0.00002) < 1e-15);
-    // Missing or nonsense change -> current only
-    assert.deepEqual(smoothPrice(0.00003, undefined), {
-      priceUsd: 0.00003,
-      currentUsd: 0.00003,
-      ago24hUsd: null,
-      method: "current_only",
-    });
-    assert.equal(smoothPrice(0.00003, -100).method, "current_only");
+  it("lets ANCHOR_MIN_BALANCE override the default; invalid values fall back", () => {
+    assert.equal(resolveMinBalance({ ANCHOR_MIN_BALANCE: "10,000" }), 10_000);
+    assert.equal(resolveMinBalance({ ANCHOR_MIN_BALANCE: "25_000" }), 25_000);
+    assert.equal(resolveMinBalance({ ANCHOR_MIN_BALANCE: "" }), DEFAULT_MIN_BALANCE);
+    assert.equal(resolveMinBalance({ ANCHOR_MIN_BALANCE: "abc" }), DEFAULT_MIN_BALANCE);
+    assert.equal(resolveMinBalance({ ANCHOR_MIN_BALANCE: "-1" }), DEFAULT_MIN_BALANCE);
   });
 
-  it("converts dollars to whole tokens, rounding up", () => {
-    assert.equal(tokensForUsd(5, 0.00001), 500_000);
-    assert.equal(tokensForUsd(5, 0.0000034434), 1_452_054); // 1,452,053.2 -> up
-    assert.equal(tokensForUsd(5, 0.00002), 250_000); // no float-noise bump
-    assert.equal(tokensForUsd(5, 0), null);
-    assert.equal(tokensForUsd(0, 0.00001), null);
-    assert.equal(tokensForUsd(5, Number.NaN), null);
-    assert.equal(tokensForUsd(1e9, 1e-15), null); // not a safe integer -> fallback
-  });
-
-  it("resolves the requirement with a token fallback when no price", () => {
-    const price = {
-      ...smoothPrice(0.00001, -50),
-      pair: "x",
-      dex: "pumpswap",
-      source: "dexscreener" as const,
+  it("the live sign-in flow gates on the token count", async () => {
+    const { decideSignIn } = await import("./flow.server.ts");
+    const host = "memecoindev.vip";
+    const w = throwawayWallet();
+    const dec = 6;
+    const minBalance = resolveMinBalance({ ANCHOR_MIN_USD: "25" });
+    const attempt = async (raw: bigint) => {
+      const n = newNonce(w.address, host);
+      return decideSignIn(
+        { secret: SECRET, host, minBalance, owners: undefined, readBalance: async () => ({ raw, dec }) },
+        signToken(SECRET, n),
+        w.signB64(buildSignInMessage(n)),
+      );
     };
-    assert.deepEqual(resolveRequirement(undefined, 500_000, price), { tokens: 500_000 });
-    assert.deepEqual(resolveRequirement(10, 500_000, price), {
-      tokens: 500_000,
-      minUsd: 10,
-      priceUsd: 0.00002,
-    });
-    assert.deepEqual(resolveRequirement(10, 500_000, null), {
-      tokens: 500_000,
-      minUsd: 10,
-      priceFallback: true,
-    });
-  });
-
-  it("fetches DexScreener once per 5 minutes and never throws", async () => {
-    clearPriceCache();
-    let calls = 0;
-    const ok = (async () => {
-      calls++;
-      return Response.json([
-        pair({ priceUsd: "0.00001", priceChange: { h24: -50 }, liquidity: { usd: 5000 } }),
-      ]);
-    }) as typeof fetch;
-    const t0 = 1_000_000;
-    const a = await getSmoothedPrice(ANCHOR_MINT, ok, t0);
-    const b = await getSmoothedPrice(ANCHOR_MINT, ok, t0 + PRICE_TTL_MS - 1);
-    assert.equal(calls, 1);
-    assert.deepEqual(a, b);
-    assert.ok(Math.abs(a!.priceUsd - 0.00002) < 1e-15);
-    await getSmoothedPrice(ANCHOR_MINT, ok, t0 + PRICE_TTL_MS);
-    assert.equal(calls, 2);
-
-    clearPriceCache();
-    const empty = (async () => Response.json([])) as typeof fetch; // what DexScreener returns for $ANCHOR today
-    assert.equal(await getSmoothedPrice(ANCHOR_MINT, empty, t0), null);
-    clearPriceCache();
-    const down = (async () => {
-      throw new Error("network down");
-    }) as typeof fetch;
-    assert.equal(await getSmoothedPrice(ANCHOR_MINT, down, t0), null);
-    clearPriceCache();
-    const http500 = (async () => new Response("x", { status: 500 })) as typeof fetch;
-    assert.equal(await getSmoothedPrice(ANCHOR_MINT, http500, t0), null);
-    // failures (both sources) are cached for 1 minute, then retried
-    let n = 0;
-    const counting = (async () => {
-      n++;
-      return new Response("x", { status: 500 });
-    }) as typeof fetch;
-    clearPriceCache();
-    await getSmoothedPrice(ANCHOR_MINT, counting, t0);
-    await getSmoothedPrice(ANCHOR_MINT, counting, t0 + 30_000);
-    assert.equal(n, 2); // one DexScreener + one GeckoTerminal attempt
-    await getSmoothedPrice(ANCHOR_MINT, counting, t0 + 60_000);
-    assert.equal(n, 4);
-    clearPriceCache();
-  });
-});
-
-describe("GeckoTerminal fallback", () => {
-  const gpool = (
-    id: string,
-    price: string,
-    reserve: string,
-    h24: string | null,
-    base = ANCHOR_MINT,
-  ) => ({
-    id: `solana_${id}`,
-    type: "pool",
-    attributes: {
-      address: id,
-      base_token_price_usd: price,
-      reserve_in_usd: reserve,
-      price_change_percentage: { h24 },
-    },
-    relationships: {
-      base_token: { data: { id: `solana_${base}` } },
-      dex: { data: { id: "pump-fun" } },
-    },
-  });
-  const router = (
-    dex: () => Response | Promise<Response>,
-    gecko: () => Response | Promise<Response>,
-    log: string[] = [],
-  ) =>
-    (async (input: string | URL | Request) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes("dexscreener")) {
-        log.push("dex");
-        return dex();
-      }
-      if (url.includes("geckoterminal")) {
-        log.push("gecko");
-        return gecko();
-      }
-      throw new Error("unexpected " + url);
-    }) as typeof fetch;
-
-  it("picks the highest-reserve pool where $ANCHOR is the base token", () => {
-    const best = pickBestGeckoPool(
-      {
-        data: [
-          gpool("small", "0.000003", "100", "0"),
-          gpool("big", "0.000004", "2765.09", "0"),
-          gpool("quote", "0.5", "999999", "0", "So11111111111111111111111111111111111111112"),
-          gpool("zero", "0", "999999", "0"),
-        ],
-      },
-      ANCHOR_MINT,
-    );
-    assert.equal(best?.attributes?.address, "big");
-    assert.equal(pickBestGeckoPool({ data: [] }, ANCHOR_MINT), null);
-    assert.equal(pickBestGeckoPool({ errors: [{ status: "429" }] }, ANCHOR_MINT), null);
-  });
-
-  it("is used when DexScreener has no pair, with the same smoothing", async () => {
-    clearPriceCache();
-    const log: string[] = [];
-    const f = router(
-      () => Response.json([]),
-      () => Response.json({ data: [gpool("curve", "0.00001", "2765", "-50")] }),
-      log,
-    );
-    const p = await getSmoothedPrice(ANCHOR_MINT, f, 5_000_000);
-    assert.deepEqual(log, ["dex", "gecko"]);
-    assert.equal(p?.source, "geckoterminal");
-    assert.equal(p?.dex, "pump-fun");
-    assert.equal(p?.pair, "curve");
-    assert.ok(Math.abs(p!.priceUsd - 0.00002) < 1e-15); // higher of current and 24h-ago
-    assert.equal(tokensForUsd(5, p!.priceUsd), 250_000);
-    clearPriceCache();
-  });
-
-  it("is used when DexScreener errors; string h24 parsed; missing h24 -> current only", async () => {
-    clearPriceCache();
-    const f = router(
-      () => {
-        throw new Error("down");
-      },
-      () => Response.json({ data: [gpool("curve", "0.000003443424193", "2765", null)] }),
-    );
-    const p = await getSmoothedPrice(ANCHOR_MINT, f, 6_000_000);
-    assert.equal(p?.source, "geckoterminal");
-    assert.equal(p?.method, "current_only");
-    assert.equal(p?.priceUsd, 0.000003443424193);
-    clearPriceCache();
-    const g = router(
-      () => new Response("x", { status: 503 }),
-      () => Response.json({ data: [gpool("curve", "0.00002", "2765", "100")] }),
-    );
-    const q = await getSmoothedPrice(ANCHOR_MINT, g, 6_000_000);
-    assert.equal(q?.method, "max_current_24h_ago");
-    assert.ok(Math.abs(q!.priceUsd - 0.00002) < 1e-15); // pumped: current is higher
-    clearPriceCache();
-  });
-
-  it("is not called when DexScreener has a pair", async () => {
-    clearPriceCache();
-    const log: string[] = [];
-    const f = router(
-      () =>
-        Response.json([
-          {
-            chainId: "solana",
-            dexId: "pumpswap",
-            pairAddress: "P",
-            baseToken: { address: ANCHOR_MINT },
-            priceUsd: "0.00001",
-            liquidity: { usd: 1 },
-            priceChange: { h24: 0 },
-          },
-        ]),
-      () => Response.json({ data: [gpool("curve", "0.5", "1", "0")] }),
-      log,
-    );
-    const p = await getSmoothedPrice(ANCHOR_MINT, f, 7_000_000);
-    assert.deepEqual(log, ["dex"]);
-    assert.equal(p?.source, "dexscreener");
-    clearPriceCache();
-  });
-
-  it("falls back to the token minimum when both sources fail (incl. GeckoTerminal 429)", async () => {
-    clearPriceCache();
-    const f = router(
-      () => Response.json([]),
-      () => Response.json({ errors: [{ status: "429", title: "Rate limited" }] }, { status: 429 }),
-    );
-    const p = await getSmoothedPrice(ANCHOR_MINT, f, 8_000_000);
-    assert.equal(p, null);
-    assert.deepEqual(resolveRequirement(5, 500_000, p), {
-      tokens: 500_000,
-      minUsd: 5,
-      priceFallback: true,
-    });
-    clearPriceCache();
-  });
-
-  it("stays well under ~30 GeckoTerminal calls/min per instance thanks to the cache", async () => {
-    clearPriceCache();
-    const log: string[] = [];
-    const f = router(
-      () => Response.json([]),
-      () => Response.json({ data: [gpool("curve", "0.000004", "2765", "0")] }),
-      log,
-    );
-    for (let t = 0; t < 60_000; t += 100) await getSmoothedPrice(ANCHOR_MINT, f, 9_000_000 + t); // 600 page loads in 1 min
-    assert.equal(log.filter((x) => x === "gecko").length, 1);
-    clearPriceCache();
+    assert.equal((await attempt(5_000n * 10n ** 6n)).kind, "holder");
+    assert.equal((await attempt(5_000n * 10n ** 6n - 1n)).kind, "not_holder");
   });
 });
 
@@ -529,7 +270,7 @@ describe("owner allowlist (OWNER_WALLETS)", () => {
   const ctx: FlowCtx = {
     secret: SECRET,
     host,
-    minBalance: 500_000,
+    minBalance: DEFAULT_MIN_BALANCE,
     owners: `junk, ${owner.address},,0OIl`,
     readBalance: async () => { balanceReads++; return { raw: 0n, dec: 6 }; }, // everyone holds 0 (mock, no network)
   };

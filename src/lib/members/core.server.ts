@@ -5,7 +5,7 @@
  */
 import { createHmac, createPublicKey, randomBytes, timingSafeEqual, verify } from "node:crypto";
 import { base58Decode, isSolanaAddress } from "./base58.ts";
-import { NONCE_TTL_MS, SESSION_TTL_MS } from "./config.ts";
+import { DEFAULT_MIN_BALANCE, NONCE_TTL_MS, SESSION_TTL_MS } from "./config.ts";
 
 export type NoncePayload = {
   p: "nonce";
@@ -149,6 +149,15 @@ export function parseMinBalance(value: string | undefined, fallback: number): nu
   if (!value) return fallback;
   const n = Number(value.replace(/[_,\s]/g, ""));
   return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+/**
+ * The live members threshold in whole $ANCHOR tokens: DEFAULT_MIN_BALANCE,
+ * optionally overridden by ANCHOR_MIN_BALANCE. This is the only input to the
+ * gate; ANCHOR_MIN_USD (the old dollar gate) is ignored on purpose.
+ */
+export function resolveMinBalance(env: Record<string, string | undefined>): number {
+  return parseMinBalance(env.ANCHOR_MIN_BALANCE, DEFAULT_MIN_BALANCE);
 }
 
 /** raw >= min * 10^dec, done in integers so huge supplies don't lose precision. */

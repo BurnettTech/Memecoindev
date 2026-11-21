@@ -53,18 +53,8 @@ export const Route = createFileRoute("/members")({
 });
 
 const fmt = (n: number) => n.toLocaleString("en-US");
-const usd = (n: number) =>
-  n.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: n % 1 ? 2 : 0,
-  });
-
-/** "$5 of $ANCHOR (about 1,162,791 tokens)" or "5,000 $ANCHOR". */
+/** "5,000 $ANCHOR": the gate is a whole-token count only. */
 function requirementText(state: MembersState) {
-  if (state.minUsd !== undefined && !state.priceFallback) {
-    return `${usd(state.minUsd)} of $ANCHOR (about ${fmt(state.minBalance)} tokens)`;
-  }
   return `${fmt(state.minBalance)} $ANCHOR`;
 }
 
@@ -162,28 +152,16 @@ function Gate({ state }: { state: Exclude<MembersState, { status: "holder" }> })
           <dl className="grid grid-cols-2 gap-3 text-sm">
             <div className="border border-line bg-surface-2 p-3">
               <dt className="text-muted">Needed</dt>
-              {state.minUsd !== undefined && !state.priceFallback ? (
-                <>
-                  <dd className="mt-1 font-display text-2xl tracking-wide text-neon">
-                    {usd(state.minUsd)}
-                  </dd>
-                  <dd className="text-muted">≈ {fmt(state.minBalance)} $ANCHOR</dd>
-                </>
-              ) : (
-                <>
-                  <dd className="mt-1 font-display text-2xl tracking-wide text-neon">
-                    {fmt(state.minBalance)}
-                  </dd>
-                  <dd className="text-muted">$ANCHOR</dd>
-                </>
-              )}
+              <dd className="mt-1 font-display text-2xl tracking-wide text-neon">
+                {fmt(state.minBalance)}
+              </dd>
+              <dd className="text-muted">$ANCHOR</dd>
             </div>
             <div className="border border-line bg-surface-2 p-3">
               <dt className="text-muted">Checked</dt>
               <dd className="mt-1 text-fg">On-chain, at sign-in and while you're signed in</dd>
             </div>
           </dl>
-          <PriceNote state={state} />
 
           {state.status === "not_holder" ? (
             <p
@@ -224,17 +202,6 @@ function Gate({ state }: { state: Exclude<MembersState, { status: "holder" }> })
         </section>
       </div>
     </>
-  );
-}
-
-function PriceNote({ state }: { state: MembersState }) {
-  if (state.minUsd === undefined) return null;
-  return (
-    <p className="text-xs text-muted">
-      {state.priceFallback
-        ? `The live $ANCHOR price isn't available right now, so the fixed ${fmt(state.minBalance)} $ANCHOR minimum applies.`
-        : "Token amount uses the higher of the current $ANCHOR price and its price 24 hours ago (DexScreener or GeckoTerminal), refreshed about every 5 minutes, so short dips don't raise the bar."}
-    </p>
   );
 }
 
