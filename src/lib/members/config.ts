@@ -4,7 +4,10 @@ export const ANCHOR_PUMP_URL = `https://pump.fun/${ANCHOR_MINT}`;
 export const ANCHOR_SITE_URL = "https://anchortoken.vip";
 export const RUG_CHECK_URL = "https://rugcheck.memecoindev.vip";
 
-/** Whole $ANCHOR tokens required when ANCHOR_MIN_BALANCE is unset. */
+/**
+ * Whole $ANCHOR tokens required to enter /members. The single code constant for the
+ * gate; ANCHOR_MIN_BALANCE can override it without a code change.
+ */
 export const DEFAULT_MIN_BALANCE = 5_000;
 
 /** Signed-in session length. */
@@ -16,15 +19,8 @@ export const NONCE_TTL_MS = 5 * 60 * 1000;
 
 export const SESSION_COOKIE = "mcd_members";
 
-/** What the gate/dashboard show as the requirement. */
-export type RequirementInfo = {
-  /** ANCHOR_MIN_USD when set */
-  minUsd?: number;
-  /** ANCHOR_MIN_USD is set but no price was available; minBalance is the token fallback */
-  priceFallback?: boolean;
-};
-
-export type MembersState = RequirementInfo & (
+/** minBalance is always a whole-token count (DEFAULT_MIN_BALANCE or ANCHOR_MIN_BALANCE). */
+export type MembersState =
   | { status: "disabled"; minBalance: number }
   | { status: "signed_out"; minBalance: number }
   | {
@@ -42,8 +38,7 @@ export type MembersState = RequirementInfo & (
       expiresAt: number;
       recheckFailed?: boolean;
       owner?: boolean;
-    }
-);
+    };
 
 export function shortAddress(address: string): string {
   return address.length > 10 ? `${address.slice(0, 4)}…${address.slice(-4)}` : address;

@@ -5,9 +5,10 @@
  * Env (memecoindev Vercel project):
  *   MEMBERS_SESSION_SECRET  required, 32+ random chars; signs nonces + session cookie.
  *                           Missing -> sign-in shows as "being set up" (fails closed).
- *   ANCHOR_MIN_BALANCE      whole $ANCHOR tokens needed (default DEFAULT_MIN_BALANCE = 5,000).
- *   ANCHOR_MIN_USD          optional dollar minimum; tokens = USD / smoothed price (DexScreener, then GeckoTerminal)
- *                           (see price.server.ts). Falls back to ANCHOR_MIN_BALANCE without a price.
+ *   ANCHOR_MIN_BALANCE      optional; whole $ANCHOR tokens needed. Overrides the code default
+ *                           DEFAULT_MIN_BALANCE (config.ts). The gate is a token count only.
+ *   ANCHOR_MIN_USD          no longer used. The old dollar-based gate was removed; a leftover
+ *                           value is ignored (see resolveMinBalance in core.server.ts).
  *   SOLANA_RPC_URL          optional; public mainnet RPC when unset.
  *   OWNER_WALLETS           optional comma-separated owner addresses: skip the balance minimum
  *                           after a VALID signature (see owners.ts / flow.server.ts).
@@ -16,24 +17,15 @@ import { createServerFn } from "@tanstack/react-start";
 import type { MembersState } from "./config.ts";
 
 async function serverCtx() {
-  const [{ getRequest, getCookie, setCookie }, core, cfg, bal, price, flow] = await Promise.all([
+  const [{ getRequest, getCookie, setCookie }, core, cfg, bal, flow] = await Promise.all([
     import("@tanstack/react-start/server"),
     import("./core.server.ts"),
     import("./config.ts"),
     import("./balance.server.ts"),
-    import("./price.server.ts"),
     import("./flow.server.ts"),
   ]);
   const secret = process.env.MEMBERS_SESSION_SECRET?.trim();
-  const fallbackTokens = core.parseMinBalance(process.env.ANCHOR_MIN_BALANCE, cfg.DEFAULT_MIN_BALANCE);
-  const minUsd = price.parseMinUsd(process.env.ANCHOR_MIN_USD);
-  const requirement = price.resolveRequirement(
-    minUsd,
-    fallbackTokens,
-    minUsd === undefined ? null : await price.getSmoothedPrice(cfg.ANCHOR_MINT),
-  );
-  const minBalance = requirement.tokens;
-  const reqInfo = { minUsd: requirement.minUsd, priceFallback: requirement.priceFallback };
+  const minBalance = core.resolveMinBalance(process.env);
   const rpcUrl = process.env.SOLANA_RPC_URL?.trim() || undefined;
 
   const request = getRequest();
@@ -62,7 +54,6 @@ async function serverCtx() {
     owners: process.env.OWNER_WALLETS,
     secret: secret && secret.length >= 32 ? secret : undefined,
     minBalance,
-    reqInfo,
     host,
     readBalance: (owner: string) => bal.fetchTokenBalance(owner, cfg.ANCHOR_MINT, rpcUrl),
     sessionCookie: () => getCookie(cfg.SESSION_COOKIE),
@@ -74,22 +65,21 @@ export const getMembersState = createServerFn({ method: "GET" }).handler(
   async (): Promise<MembersState> => {
     const ctx = await serverCtx();
     const { minBalance } = ctx;
-    if (!ctx.secret) return { status: "disabled", minBalance, ...ctx.reqInfo };
+    if (!ctx.secret) return { status: "disabled", minBalance };
 
     const out = await ctx.flow.decideState(
       { secret: ctx.secret, host: ctx.host, minBalance, owners: ctx.owners, readBalance: ctx.readBalance },
       ctx.sessionCookie(),
     );
-    if (out.kind === "signed_out") return { status: "signed_out", minBalance, ...ctx.reqInfo };
+    if (out.kind === "signed_out") return { status: "signed_out", minBalance };
     if (out.kind === "not_holder") {
       ctx.writeSession(null);
-      return { status: "not_holder", minBalance, ...ctx.reqInfo, address: out.address, balance: out.balance };
+      return { status: "not_holder", minBalance, address: out.address, balance: out.balance };
     }
     if (out.rewrite) ctx.writeSession(out.rewrite);
     return {
       status: "holder",
       minBalance,
-      ...ctx.reqInfo,
       address: out.session.a,
       balance: out.balance,
       checkedAt: out.session.chk,
@@ -117,7 +107,7 @@ export const completeSignIn = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<MembersState | { status: "error"; error: string }> => {
     const ctx = await serverCtx();
     const { minBalance } = ctx;
-    if (!ctx.secret) return { status: "disabled", minBalance, ...ctx.reqInfo };
+    if (!ctx.secret) return { status: "disabled", minBalance };
     const out = await ctx.flow.decideSignIn(
       { secret: ctx.secret, host: ctx.host, minBalance, owners: ctx.owners, readBalance: ctx.readBalance },
       data?.nonceToken,
@@ -126,13 +116,12 @@ export const completeSignIn = createServerFn({ method: "POST" })
     if (out.kind === "error") return { status: "error", error: out.error };
     if (out.kind === "not_holder") {
       ctx.writeSession(null);
-      return { status: "not_holder", minBalance, ...ctx.reqInfo, address: out.address, balance: out.balance };
+      return { status: "not_holder", minBalance, address: out.address, balance: out.balance };
     }
     ctx.writeSession(out.session);
     return {
       status: "holder",
       minBalance,
-      ...ctx.reqInfo,
       address: out.session.a,
       balance: out.balance,
       checkedAt: out.session.chk,

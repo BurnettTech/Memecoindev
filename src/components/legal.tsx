@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { CONTACT_EMAIL, Kicker } from "@/components/shell";
 
-export const LEGAL_EFFECTIVE = "October 25, 2026";
+export const LEGAL_EFFECTIVE = "November 21, 2026";
 
 export const linkClass = "text-teal underline decoration-teal/40 underline-offset-2 hover:text-fg";
 

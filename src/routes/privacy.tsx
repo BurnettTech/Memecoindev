@@ -100,10 +100,8 @@ function PrivacyPage() {
           the balance check still happens. No members cookie is saved in that case.
         </p>
         <p>
-          If the members gate is set as a dollar amount, the server also asks DexScreener for the
-          public $ANCHOR price, and GeckoTerminal if DexScreener doesn't answer. That call uses the
-          token's public mint address. It is not tied to your email. If the gate is a token count
-          only, that price lookup is skipped.
+          The members gate is a set number of $ANCHOR tokens, not a dollar amount. The server does
+          not look up the $ANCHOR price for sign-in, so no price service is contacted about you.
         </p>
         <p>Your wallet app is a separate company. What it stores is covered by its own policy.</p>
       </LegalSection>
@@ -133,8 +131,8 @@ function PrivacyPage() {
           sign out. I don't keep a second copy of that session in a database on this site.
         </p>
         <p>
-          Vercel, Google Fonts, grok.com, a Solana RPC, DexScreener, and GeckoTerminal may keep
-          their own logs under their own policies. I don't control those.
+          Vercel, Google Fonts, grok.com, and a Solana RPC may keep their own logs under their own
+          policies. I don't control those.
         </p>
       </LegalSection>
 
