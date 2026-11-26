@@ -179,7 +179,7 @@ export function OutLink({
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex min-h-11 items-center gap-2 bg-gold px-4 text-sm font-semibold text-gold-ink hover:bg-fg"
+      className="btn-lift inline-flex min-h-11 items-center gap-2 bg-gold px-4 text-sm font-semibold text-gold-ink transition-transform duration-300 hover:-translate-y-1 hover:bg-fg"
     >
       {children}
       <ArrowUpRight className="size-4" aria-hidden="true" />
