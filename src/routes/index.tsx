@@ -30,7 +30,7 @@ export const Route = createFileRoute("/")({
 function Home() {
   return (
     <div className="flex flex-col gap-14">
-      <section className="relative grid items-start gap-8 overflow-hidden lg:grid-cols-[18rem_minmax(0,1fr)]">
+      <section className="relative grid items-start gap-8 lg:grid-cols-[18rem_minmax(0,1fr)]">
         <HeroBackdrop />
         <figure className="relative z-10">
           <img
